@@ -24,6 +24,20 @@ For UK VAT-registered businesses, the EORI standard follows `GB` + `[9-digit VAT
 * *Constraint*: There is no central public directory mapping company names to EORIs.
 * *Observation*: Third-party directories like `eorichecker.eu` block automated access and lack clear data provenance, making them unreliable for a production pipeline without verified sourcing.
 
+
+### 4. Alternative Vector: Common Crawl Archive
+Tested querying Common Crawl's public CDX index to extract target pages via HTTP Range requests without directly hitting company servers.
+
+* **Initial Probing & Edge Cases**:
+  * Domain-level wildcard queries returned excessive noise (e.g., third-party Klarna terms, tracking URLs with UTM parameters).
+  * Triggered HTTP `429 Too Many Requests` due to missing delays between consecutive WARC byte-range fetches.
+* **Refined Approach**:
+  * Implemented request throttling and targeted exact URL paths rather than domain wildcards.
+  * Validated the query mechanism with a sanity check on `commoncrawl.org` (43 captures confirmed).
+  * Queried exact `/terms` subpaths for verified positive cases (Hotel Chocolat, Cult Beauty).
+* **Key Finding (Breadth vs. Depth Trade-Off)**:
+  * While homepages were present (ex: 3 captures for Hotel Chocolat), the deeper `/terms` pages containing the actual VAT disclosure were not indexed.
+  * **Conclusion**: Common Crawl prioritizes domain breadth over site depth. One-off lookups are unreliable for discovering identifiers located several clicks deep; leveraging this data source effectively would require batch-processing bulk WARC extracts on dedicated infrastructure.
 ---
 
 ## Roadmap
