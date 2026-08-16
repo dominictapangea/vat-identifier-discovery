@@ -1,6 +1,6 @@
-# Test exploratoriu Common Crawl: verificam daca identificatorii fiscali (VAT)
-# pot fi extrasi direct din arhiva publica fara crawling activ pe domeniile tinta.
-# Flux: Interogare CDX Index -> Range Request pe fisierul WARC -> Regex search.
+# Test exploratoriu Common Crawl:
+# Verificam daca URL-urile pe care am identificat deja date fiscale prin crawling direct
+# exista in indexul CDX si pot fi parsate eficient prin HTTP Range Requests.
 
 from io import BytesIO
 import json
@@ -11,70 +11,68 @@ from warcio.archiveiterator import ArchiveIterator
 
 HEADERS = {"User-Agent": "research test - Dominic Tapangea, Veridion tech challenge"}
 
-# Pattern standard GB VAT (9 cifre, cu/fara prefix GB si separatori)
 VAT_PATTERN = re.compile(
     r"VAT[^0-9]{0,20}(GB)?\s?(\d{3}\s?\d{4}\s?\d{2}|\d{9})",
     re.IGNORECASE,
 )
 
-DOMAINS = [
-    "gymshark.com",
-    "bloomandwild.com",
-    "hotelchocolat.com",
-    "cultbeauty.co.uk",
-    "brompton.com",
-    "cognism.com",
-    "gocardless.com",
-    "thoughtmachine.net",
-    "propellernet.co.uk",
-    "hays.co.uk",
-    "renishaw.com",
-    "morganadvancedmaterials.com",
-    "dualit.com",
-    "dssmith.com",
-]
+# Cazuri pozitive confirmate anterior in test_website_vat.py
+KNOWN_VAT_PAGES = {
+    "hotelchocolat.com": "https://www.hotelchocolat.com/terms",
+    "cultbeauty.co.uk": "https://www.cultbeauty.co.uk/terms-and-conditions",
+}
 
-# Cuvinte-cheie pentru prioritizarea paginilor legale si de contact
+# Cuvinte-cheie pentru prioritizarea paginilor legale si de conformitate
 LIKELY_PATH_HINTS = ["term", "contact", "about", "legal", "privacy", "delivery"]
 
 
+def clean_path(url: str) -> str:
+    """Elimina query params (tracking, UTM) pentru a pastra doar ruta de baza."""
+    return url.split("?")[0]
+
+
 def get_latest_crawl_id() -> str:
-    """Preia identificatorul celui mai recent snapshot Common Crawl disponibil."""
+    """Preia identificatorul celui mai recent snapshot Common Crawl."""
     resp = requests.get("https://index.commoncrawl.org/collinfo.json", headers=HEADERS)
     crawls = resp.json()
     return crawls[0]["id"]
 
 
-def query_cdx(domain: str, crawl_id: str) -> list:
-    """Interogheaza indexul CDX pentru a lista URL-urile capturate pe un domeniu."""
-    url = f"https://index.commoncrawl.org/{crawl_id}-index"
-    params = {
-        "url": f"{domain}/*",
-        "output": "json",
-        "limit": 50,
-    }
-    resp = requests.get(url, params=params, headers=HEADERS)
+def query_cdx_exact(url: str, crawl_id: str) -> list:
+    """Interogheaza indexul CDX pentru o ruta exacta, evitand scanarea pe tot domeniul."""
+    index_url = f"https://index.commoncrawl.org/{crawl_id}-index"
+    params = {"url": url, "output": "json"}
+    resp = requests.get(index_url, params=params, headers=HEADERS)
     if resp.status_code != 200:
+        print(f"    [debug] query CDX a esuat: status {resp.status_code}")
         return []
 
-    records = []
-    for line in resp.text.strip().split("\n"):
-        if line:
-            records.append(json.loads(line))
-    return records
+    if not resp.text.strip():
+        return []
+
+    return [json.loads(line) for line in resp.text.strip().split("\n") if line]
 
 
 def fetch_record_text(record: dict) -> str:
-    """Extrage HTML-ul paginii folosind HTTP Range Request pe segmentul WARC dedicat."""
+    """Descarca strict segmentul WARC asociat paginii prin Range Request."""
     offset = int(record["offset"])
     length = int(record["length"])
     filename = record["filename"]
 
     range_header = {"Range": f"bytes={offset}-{offset + length - 1}"}
-    resp = requests.get(
-        f"https://data.commoncrawl.org/{filename}",
-        headers={**HEADERS, **range_header},
-    )
+
+    # Retry cu backoff liniar pentru 429 (rate limits)
+    for attempt in range(3):
+        resp = requests.get(
+            f"https://data.commoncrawl.org/{filename}",
+            headers={**HEADERS, **range_header},
+        )
+        if resp.status_code == 429:
+            wait = 5 * (attempt + 1)
+            print(f"    rate limited (429), pauza {wait}s inainte de retry...")
+            time.sleep(wait)
+            continue
+        break
 
     stream = BytesIO(resp.content)
     for warc_record in ArchiveIterator(stream):
@@ -85,45 +83,50 @@ def fetch_record_text(record: dict) -> str:
 
 if __name__ == "__main__":
     crawl_id = get_latest_crawl_id()
-    print(f"Snapshot Common Crawl activ: {crawl_id}\n")
+    print(f"Folosim crawl-ul: {crawl_id}\n")
+
+    # Sanity check pe un URL indexat garantat pentru a valida endpoint-ul CDX
+    print("=== sanity check: commoncrawl.org ===")
+    sanity = query_cdx_exact("https://commoncrawl.org/", crawl_id)
+    print(f"  {len(sanity)} capturi gasite\n")
 
     found_count = 0
 
-    for domain in DOMAINS:
+    for domain, page_url in KNOWN_VAT_PAGES.items():
         print(f"=== {domain} ===")
-        records = query_cdx(domain, crawl_id)
-        print(f"  {len(records)} rute indexate gasite")
+
+        homepage = f"https://www.{domain}/"
+        print(f"  test homepage: {homepage}")
+        homepage_records = query_cdx_exact(homepage, crawl_id)
+        print(f"  {len(homepage_records)} capturi pentru homepage")
+
+        print(f"  cautam exact: {page_url}")
+        records = query_cdx_exact(page_url, crawl_id)
+        print(f"  {len(records)} capturi gasite pentru acest URL exact")
 
         if not records:
-            time.sleep(2)
+            print("  Common Crawl nu are aceasta pagina indexata")
+            time.sleep(3)
             continue
 
-        # Filtram cu prioritate rutele legale / termeni / contact
-        candidates = [
-            r for r in records
-            if any(hint in r["url"].lower() for hint in LIKELY_PATH_HINTS)
-        ]
-        target_records = candidates[:2] if candidates else records[:1]
+        # Parsam cel mai recent snapshot capturat
+        record = records[-1]
+        print(f"  captura din: {record.get('timestamp')}, status {record.get('status')}")
 
-        vat_found = False
-        for record in target_records:
-            print(f"  scanare: {record['url']} (status {record.get('status')})")
-            try:
-                text = fetch_record_text(record)
-            except Exception as e:
-                print(f"    eroare la parsare WARC: {e}")
-                continue
+        try:
+            text = fetch_record_text(record)
+        except Exception as e:
+            print(f"    eroare la extragere: {e}")
+            time.sleep(3)
+            continue
 
-            match = VAT_PATTERN.search(text)
-            if match:
-                print(f"    IDENTIFICAT: {match.group(0)}")
-                vat_found = True
-                found_count += 1
-                break
+        match = VAT_PATTERN.search(text)
+        if match:
+            print(f"    GASIT: {match.group(0)}")
+            found_count += 1
+        else:
+            print(f"    VAT neidentificat in continutul extras")
 
-        if not vat_found:
-            print("    VAT neidentificat in segmentele scanate")
+        time.sleep(3)  # Throttling intre domenii conform politicii Common Crawl
 
-        time.sleep(2)  # Delay preventiv conform regulilor de acces Common Crawl
-
-    print(f"\n=== Rezumat: VAT extras via Common Crawl la {found_count}/{len(DOMAINS)} companii ===")
+    print(f"\n=== Rezumat: VAT identificat via Common Crawl la {found_count}/{len(KNOWN_VAT_PAGES)} companii ===")
