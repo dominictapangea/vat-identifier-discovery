@@ -1,70 +1,32 @@
-# VAT Identifier Discovery — Veridion Tech Challenge
+# VAT Identifier Discovery
 
-## Part 1: Research
+## Part 1 — Research & Feasibility
 
-### Verification (how do we check if a VAT number is real?)
+### 1. Validating a VAT Number
+* **Official HMRC API**: The open v1 endpoint was deprecated in Feb 2025. The current v2 API requires a formal developer registration process (~2 weeks lead time), which did not fit the timeframe of this challenge.
+* **Public HMRC Web Checker**: Automated requests against HMRC's public web form (`https://www.tax.service.gov.uk/check-vat-number/enter-vat-details`) by extracting the session CSRF token on initial GET and posting the payload. 
+  * *Debugging note*: Initial POST returned `400 Bad Request` due to assuming the field name was `vatNumber`; the form actually expects `target`.
+* **Sanity Checks**:
+  * Positive test: `765970776` (Google UK Ltd) returned valid with matching entity metadata.
+  * Negative test: `000000000` correctly resolved as invalid.
+* **Rate-Limit Probing**: Ran 25 consecutive POST requests without artificial delays (~0.29s latency/request). Encountered zero Captchas, blocks, or 429s. (Note: Represents a burst test, not a long-term sustained load).
 
-**Official route (HMRC "Check a UK VAT Number" API v2) — dead end for this timeline.**
-The API moved behind authentication in 2025 (v1, which was open, was retired 17 Feb 2025).
-Registering for v2 access through HMRC's Developer Hub takes ~2 weeks according to their
-own documentation. That doesn't fit a 5-day challenge window, so this route was ruled out
-early — not because it doesn't work, but because it can't be ready in time.
-Source: https://developer.service.hmrc.gov.uk/api-documentation/docs/api/service/vat-registered-companies-api/2.0
+### 2. VAT Discovery & Footprint Extraction
+Finding the identifier remains the core challenge:
+* **Companies House Data**: Provides name, registered address, SIC code, and incorporation dates, but lacks VAT identifiers and official website URLs. Useful for baseline company seeding, not direct discovery.
+* **Website Scraping**: Under UK regulations (*Electronic Commerce Regulations 2002* & *Trading Disclosures Regulations 2008*), businesses selling online must disclose their VAT number. 
+  * Tested an exploratory sample of 14 UK businesses across B2C retail, B2B/SaaS, and manufacturing across their homepage and legal subpaths (`/terms`, `/contact`, `/about`).
+  * Yielded **2/14 matches** (Hotel Chocolat and Cult Beauty, both on their Terms pages). Zero matches on B2B SaaS and manufacturing websites.
+  * *Manual sanity check*: Manually inspected Gymshark to confirm whether client-side JavaScript rendering hid the identifier from the script. Confirmed the VAT number was genuinely omitted from the static footer/terms.
 
-**Working alternative: the public web checker.**
-https://www.tax.service.gov.uk/check-vat-number/enter-vat-details is HMRC's own public,
-unauthenticated form. No API key, no captcha encountered. Fully automatable:
-- GET the entry page, extract a `csrfToken` from a hidden input
-- POST `{csrfToken, target: <vat_number>, requester: ""}` back to the same path
-- Result page URL ends in `/known` (valid) or `/unknown` (invalid) — cheap to check
-  success without parsing the full page
-- Valid responses include registered business name + address
-
-**Verified with real data:** GB765970776 → valid → "GOOGLE UK LTD", 1 Chamberlain
-Square, Birmingham B3 3AX. Confirms the parsing logic is correct, not just plausible.
-
-**Rate limiting: none observed, but only tested at small scale.**
-25 consecutive real POST checks (random 9-digit numbers, no delay) → all HTTP 200,
-~0.29s/check average, total 7.2s. No throttling, no CAPTCHA challenge appeared.
-Caveat: this is a short burst (~7 seconds). Sustained volume (hundreds/thousands of
-checks over a longer period) is untested — noted as an open risk for Part 3, not a
-confirmed safe limit.
-Test date: 16 August 2026.
-
-### Discovery (where do VAT numbers actually live on the open web?)
-
-**Companies House bulk data — good for the company universe, not for VAT.**
-Free monthly CSV snapshot of all live UK companies (name, company number, registered
-address, SIC codes, incorporation date). No VAT numbers included. Useful as the base
-population to sample from, not as a source of the identifier itself.
-
-<!-- Following sections to fill in as we test each source: -->
-
-**[TODO] Legal disclosure requirements (E-Commerce Regulations 2002 etc.)**
-
-**[TODO] Common Crawl / bulk web corpora**
-
-**[TODO] Adjacent identifiers (EORI etc.)**
-
-**[TODO] Public records (insolvency notices, procurement/spend data)**
+### 3. Alternative Vector: EORI Numbers
+For UK VAT-registered businesses, the EORI standard follows `GB` + `[9-digit VAT]` + `000`. 
+* *Constraint*: There is no central public directory mapping company names to EORIs.
+* *Observation*: Third-party directories like `eorichecker.eu` block automated access and lack clear data provenance, making them unreliable for a production pipeline without verified sourcing.
 
 ---
 
-## Part 2: Proof of Concept
-<!-- sample selection method, pipeline, coverage %, false-positive rate + how measured -->
-
----
-
-## Part 3: At scale
-<!-- cost per company, what breaks first, what to monitor -->
-
----
-
-## Debate topics
-<!-- checksum brute-force idea, keeping data current, detecting wrongness without
-     a reference dataset, which sources you wouldn't trust in a commercial product -->
-
----
-
-## Beyond the UK (optional)
-<!-- Germany comparison, a country where VAT is barely "discoverable", hardest cases -->
+## Roadmap
+* **Part 2**: proper sample, real pipeline, measured coverage + false-positive rate
+* **Part 3**: scaling considerations
+* **Debate & Edge Cases**: Discussion topics and non-UK market applicability.
