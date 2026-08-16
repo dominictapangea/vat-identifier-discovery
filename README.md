@@ -40,7 +40,17 @@ Tested querying Common Crawl's public CDX index to extract target pages via HTTP
   * **Conclusion**: Common Crawl prioritizes domain breadth over site depth. One-off lookups are unreliable for discovering identifiers located several clicks deep; leveraging this data source effectively would require batch-processing bulk WARC extracts on dedicated infrastructure.
 ---
 
+## Part 2 - Proper sample, Real pipeline, Measured coverage + false-positive rate
+
+### Data Quality & Edge Case: Validated Web Disclosures vs. Regulatory Truth
+
+During HMRC cross-validation of discovered numbers, an edge case highlighted the difference between extracted web data and ground truth:
+
+* **Observation**: The VAT identifier extracted for *Snowbird Foods* (`927328019`) returned `Invalid` from HMRC.
+* **Sanity Check**: Manually audited the live webpage to verify whether the extraction script parsed corrupted text or invalid tokens. The number was rendered cleanly and verbatim in the website's footer (no regex or scraping bug).
+* **Root Cause**: The company is publicly displaying a non-valid or stale VAT number (likely due to a legacy typo during web development, corporate restructuring, or VAT deregistration without updating static footer assets).
+* **Engineering Takeaway**: Proves that "public disclosure" cannot be equated with "valid active status." Pipeline ingestion must treat web-extracted identifiers as unverified candidates until validated against the official HMRC registry.
+
 ## Roadmap
-* **Part 2**: proper sample, real pipeline, measured coverage + false-positive rate
 * **Part 3**: scaling considerations
 * **Debate & Edge Cases**: Discussion topics and non-UK market applicability.
