@@ -70,7 +70,33 @@ The primary bottleneck isn't compute or scraping speed—it is **discovery accur
 * **Rolling Quality & Sanity Audits**: As seen in the *Snowbird Foods* case (clean scraping, but stale/invalid number on the live site), "published by the company" does not guarantee active registry validity. Regular manual sampling of verified records is required to catch drift.
 * **Regulatory Tracking**: Monitor post-Brexit UK corporate disclosure laws to ensure the legal basis for public web disclosure remains intact.
 
+## Part 4 — Debate Topics & Edge Cases
+
+### 1. The Checksum Dilemma: Coverage vs. Ethics
+* **The Math**: UK VAT numbers use a modulus 97 checksum (~10.3M valid combinations out of 10⁹).
+* **The Opportunity**: Generating all valid checksums and querying HMRC would theoretically reconstruct the entire national registry without crawling a single website. Crucially, this is the only automated method capable of capturing sole traders (~50% of UK VAT registrations, entirely absent from Companies House).
+* **The Reality**: At ~0.29s per check, running 10.3M queries requires ~35 days of nonstop traffic against a free public service meant for single invoice lookups. This crosses into abusive scraping and legal risk (Computer Misuse Act). It is technically the highest-coverage vector, but structurally unusable in a production product.
+
 ---
 
-## Roadmap
-* **Debate & Edge Cases**: Discussion topics and non-UK market applicability.
+### 2. Pipeline Freshness & Churn
+* **Decoupled Registries**: Companies House status and HMRC VAT status are completely independent—companies (de)register for VAT without triggering a Companies House event.
+* **Stream Maintenance**:
+  * **New Entities**: Stream daily Companies House change feeds to trigger web discovery only on newly incorporated businesses.
+  * **Existing Pool**: Periodically re-run the HMRC checker over previously discovered numbers. This catches silent deregistrations cheaply via API hits without re-crawling websites.
+
+---
+
+### 3. Error Detection Without Ground Truth
+* **Cross-Registry Matching**: Check the name and postcode returned by HMRC against the registered address in Companies House. Any discrepancy flags an invalid match immediately.
+* **Multi-Source Corroboration**: Boost confidence scores when the same identifier turns up across distinct touchpoints (e.g., website terms page + corporate PDF filing).
+* **Drift Monitoring**: Track rolling discovery rates per sector over time—a sharp drop signals layout changes, crawler blocks, or regulatory shifts.
+* **Client Feedback Loops**: Monitor customer dispute and correction rates in production as the ultimate data quality indicator.
+
+---
+
+### 4. Data Provenance & Blacklisted Sources
+* **Excluded**:
+  * *Checksum brute-forcing*: Abusive traffic profile and unacceptable legal risk.
+  * *Third-party scrapers (eorichecker.eu)*: Unknown data origin and aggressive anti-bot protection. Ingesting unverified third-party records breaks data lineage and risks corrupting downstream database joins.
+* **Trusted**: Direct first-party disclosures (legal terms/footers) cross-validated against authoritative government registries (HMRC, Companies House), where provenance is fully transparent and auditable.
