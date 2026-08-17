@@ -51,6 +51,26 @@ During HMRC cross-validation of discovered numbers, an edge case highlighted the
 * **Root Cause**: The company is publicly displaying a non-valid or stale VAT number (likely due to a legacy typo during web development, corporate restructuring, or VAT deregistration without updating static footer assets).
 * **Engineering Takeaway**: Proves that "public disclosure" cannot be equated with "valid active status." Pipeline ingestion must treat web-extracted identifiers as unverified candidates until validated against the official HMRC registry.
 
+## Part 3 — Scaling Considerations & Production Architecture
+
+### What I’d Change with Real Resources
+The primary bottleneck isn't compute or scraping speed—it is **discovery accuracy**. Two targeted upgrades:
+
+* **SERP API for Domain Resolution**: Replace heuristic domain-guessing with programmatic search lookups.This correctly maps companies whose trading domains differ entirely from their registered legal entity names.
+* **Headless Browser Rendering**: Plain HTTP requests miss client-side JavaScript footers on modern SPAs and e-commerce platforms. Adding headless rendering  eliminates this visibility gap.
+* **Unit Economics**: $0.002 (search) + $0.01–$0.02 (rendered subpaths) = **$0.01–$0.03 discovery cost per company**. Running a full pass across ~4.2M live UK companies requires an estimated **$40k–$120k** in third-party API spend.
+
+
+### Failure Modes (What Breaks First)
+* **HMRC Verification Throttling**: The public form was only burst-tested (25 requests in 7s). At sustained production volumes (thousands/day), it will likely hit IP blocks, CAPTCHAs, or rate limits. Without access to the authenticated v2 API, this step remains the pipeline's fragile dependency.
+* **DOM & Form Fragility**: Unannounced layout shifts (input names changing from `vatNumber` to `target`) silently break automated submission and extraction scripts.
+
+### Production Observability & Maintenance
+* **Source Hit Rates Over Time**: Track discovery yield per SIC group. Sudden downward trends indicate broken scrapers, blocked IPs, or layout changes.
+* **Rolling Quality & Sanity Audits**: As seen in the *Snowbird Foods* case (clean scraping, but stale/invalid number on the live site), "published by the company" does not guarantee active registry validity. Regular manual sampling of verified records is required to catch drift.
+* **Regulatory Tracking**: Monitor post-Brexit UK corporate disclosure laws to ensure the legal basis for public web disclosure remains intact.
+
+---
+
 ## Roadmap
-* **Part 3**: scaling considerations
 * **Debate & Edge Cases**: Discussion topics and non-UK market applicability.
